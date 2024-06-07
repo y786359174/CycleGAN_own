@@ -20,7 +20,7 @@ Distributed_Flag = True
 
 
 def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:Discriminator, ckpt_path, device = 'cuda'):
-    
+    print("using: ", device)    #你问我为什么写在这？因为main里总是有各种各样的地方会改device
     n_epochs = 5000
     batch_size = 1
     lr = 1e-4
@@ -29,6 +29,7 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
         k_max = 6
     else:
         k_max = 1
+    
     print("wgan_flag=", wgan_flag)
     # criterion_GAN = torch.nn.MSELoss().to(device)
     criterion_GAN = torch.nn.BCELoss().to(device)
@@ -39,9 +40,9 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
 
     Imgx_dir_name = '../face2face/dataset/train/C'
     Imgy_dir_name = '../face2face/dataset/train/A'
+
     if Distributed_Flag:
-        dataloaderx = get_dataloader(batch_size,Imgx_dir_name, distributed=True)
-        dataloadery = get_dataloader(batch_size,Imgy_dir_name, distributed=True)
+        total_rank = dist.get_world_size()
         genG = torch.nn.SyncBatchNorm.convert_sync_batchnorm(genG).to(device)
         genG = DDP(genG, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
         genF = torch.nn.SyncBatchNorm.convert_sync_batchnorm(genF).to(device)
@@ -50,9 +51,9 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
         disG = DDP(disG, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
         disF = torch.nn.SyncBatchNorm.convert_sync_batchnorm(disF).to(device)
         disF = DDP(disF, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-    else:
-        dataloaderx = get_dataloader(batch_size,Imgx_dir_name)
-        dataloadery = get_dataloader(batch_size,Imgy_dir_name)
+    
+    dataloaderx = get_dataloader(batch_size,Imgx_dir_name, distributed = Distributed_Flag)
+    dataloadery = get_dataloader(batch_size,Imgy_dir_name, distributed = Distributed_Flag)
     
     len_x = len(dataloaderx.dataset)
     len_y = len(dataloadery.dataset)
@@ -61,7 +62,7 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
         len_dataset = len_y
     else:
         len_dataset = len_x
-
+    len_dataset = int(len_dataset/total_rank) if Distributed_Flag else len_dataset
     gen_params = list(genG.parameters()) + list(genF.parameters())
     dis_params = list(disG.parameters()) + list(disF.parameters())
 
@@ -88,31 +89,32 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
 
     k = 0
     for epoch_i in range(n_epochs):
+
         if Distributed_Flag and local_rank >= 0:
             torch.distributed.barrier()
             dataloaderx.sampler.set_epoch(epoch_i)
             dataloadery.sampler.set_epoch(epoch_i)
+
         tic = time.time()
         if(epoch_i%50==0 and k < k_max):          # 让k缓慢的增大到k_max
             k+=1
-        datax_iter = iter(dataloaderx)
-        datay_iter = iter(dataloadery)
+        
+            # datax_iter = iter(dataloaderx)
+            # datay_iter = iter(dataloadery)
 
-
-        loss_list = torch.zeros((11,1)).to(device)
+        loss_list = torch.zeros((9,1)).to(device)
         loss_list = loss_list.squeeze()
 
-        for _ in tqdm(range(len_dataset)):
-            x,_  = next(datax_iter)
-            y,_  = next(datay_iter)
+        for (x, _), (y, _) in tqdm(zip(dataloaderx, dataloadery), disable = local_rank != 0):
+        # for _ in tqdm(range(len_dataset), disable = local_rank != 0):
+                            
+            # x,_  = next(datax_iter) # may raise StopIteration
+            # y,_  = next(datay_iter) 
+            # y = dataloadery[iter_i]
             x = x.to(device)
             y = y.to(device)
 
-            if(x.shape[0]!=batch_size):
-                continue
-
             # 训练Gen
-            
             for param in disG.parameters():
                 param.requires_grad = False
             for param in disF.parameters():
@@ -137,12 +139,13 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
                 g_wloss_F = -torch.mean(disF(yx))
                 g_loss_gan = g_wloss_G+g_wloss_F
                 
-            xyFe = genF.module.encode(xy)    if Distributed_Flag else genF.encode(xy)
-            xyx =  genF.module.decode(xyFe)  if Distributed_Flag else genF.decode(xyFe)
-            yxGe = genG.module.encode(yx)    if Distributed_Flag else genG.encode(yx)
-            yxy =  genG.module.decode(yxGe)  if Distributed_Flag else genG.decode(yxGe)
-
-            g_loss_latent = criterion_Latent(xGe, xyFe) + criterion_Latent(yFe, yxGe)
+            # xyFe = genF.module.encode(xy)    if Distributed_Flag else genF.encode(xy)
+            # xyx =  genF.module.decode(xyFe)  if Distributed_Flag else genF.decode(xyFe)
+            # yxGe = genG.module.encode(yx)    if Distributed_Flag else genG.encode(yx)
+            # yxy =  genG.module.decode(yxGe)  if Distributed_Flag else genG.decode(yxGe)
+            xyx = genF(xy)
+            yxy = genG(yx)
+            # g_loss_latent = criterion_Latent(xGe, xyFe) + criterion_Latent(yFe, yxGe)
             
 
             
@@ -151,12 +154,12 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
             g_loss_cycle_F = criterion_Cycle(yxy, y) 
             g_loss_cycle = g_loss_cycle_G + g_loss_cycle_F
             # print(g_loss_cycle_1, g_loss_cycle_2)
-            xx = genF(x)
-            yy = genG(y)
-            g_loss_identity = criterion_Identity(xx, x) + criterion_Identity(yy, y)
+            # xx = genF(x)
+            # yy = genG(y)
+            # g_loss_identity = criterion_Identity(xx, x) + criterion_Identity(yy, y)
             # g_loss_identity_G = criterion_Identity(xx, x)
             # g_loss_identity_F = criterion_Identity(yy, y)
-            g_loss = g_loss_gan*10+ g_loss_cycle*20 + g_loss_identity*0 + g_loss_latent*1 + g_loss_recon*40
+            g_loss = g_loss_gan*10+ g_loss_cycle*20 + g_loss_recon*40
             # g_loss_G = g_loss_gan_G * gan_const + g_loss_cycle_G*20 + g_loss_identity_G*10
             # g_loss_F = g_loss_gan_F * gan_const + g_loss_cycle_F*20 + g_loss_identity_F*10
             # g_loss = g_loss_G + g_loss_F + g_loss_latent
@@ -202,7 +205,7 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
                         p.data.clamp_(-0.01, 0.01)
                     for p in disF.parameters():
                         p.data.clamp_(-0.01, 0.01)
-            loss_list += torch.stack([g_loss, d_loss, g_loss_gan, g_loss_cycle, g_loss_identity, g_loss_latent, g_loss_recon, d_loss_G_real, d_loss_G_fake, d_loss_F_real, d_loss_F_fake])  #把列表转换成tensor
+            loss_list += torch.stack([g_loss, d_loss, g_loss_gan, g_loss_cycle, g_loss_recon, d_loss_G_real, d_loss_G_fake, d_loss_F_real, d_loss_F_fake])  #把列表转换成tensor
             
 
 
@@ -214,7 +217,7 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
             gan_weights = {'genG': genG.state_dict(), 'genF': genF.state_dict(), 'disG': disG.state_dict(), 'disF': disF.state_dict()}
             torch.save(gan_weights, ckpt_path)
             print(f'epoch {epoch_i} g_loss: {loss_list[0].item():.4e} d_loss: {loss_list[1].item():.4e} time: {(toc - tic):.2f}s device: {device}')
-            print(f'g_loss_gan {loss_list[2].item():.4e} g_loss_cycle: {loss_list[3].item():.4e} g_loss_identity: {loss_list[4].item():.4e} g_loss_latent: {loss_list[5].item():.4e} g_loss_recon: {loss_list[6].item():.4e}')
+            print(f'g_loss_gan {loss_list[2].item():.4e} g_loss_cycle: {loss_list[3].item():.4e} g_loss_recon: {loss_list[6].item():.4e}')
             if not wgan_flag:
                 print(f'd_loss_G_real {loss_list[7].item():.4e} d_loss_G_fake: {loss_list[8].item():.4e} d_loss_F_real: {loss_list[9].item():.4e} d_loss_F_fake: {loss_list[10].item():.4e}')
             else:
@@ -297,7 +300,7 @@ if __name__ == '__main__':
         local_rank = 0
         device = 'cuda'
 
-    # # random reset
+    # random reset
     seed = 1234
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -306,7 +309,6 @@ if __name__ == '__main__':
     np.random.seed(seed)
 
     ckpt_path = os.path.join(save_dir,'model_cyclegan.pth')
-    device = 'cuda'
     image_shape = get_img_shape()
     genG = GeneratorResNet(image_shape, 11).to(device)    # x->y
     genF = GeneratorResNet(image_shape, 11).to(device)    # y->x

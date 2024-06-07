@@ -59,7 +59,7 @@ def get_dataloader(batch_size: int, data_dir, num_workers = 0, distributed = Fal
             drop_last=True,
              )
     else:
-        return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers = num_workers)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers = num_workers, drop_last=True)
 
 def get_img_shape():
     # return (3, 256, 256)    # 虽然这么写很蠢。但是好像还真挺好用
