@@ -44,11 +44,20 @@ def get_dataloader(batch_size: int, data_dir, num_workers = 0, distributed = Fal
                          ])
     dataset = torchvision.datasets.ImageFolder(root=data_dir,
                                          transform=transform)
+
     if distributed:
         sampler = DistributedSampler(dataset)
     
     if distributed:
-        return sampler, DataLoader(dataset, sampler = sampler, batch_size=batch_size, shuffle=True, num_workers = num_workers)
+        return DataLoader(
+            dataset, 
+            batch_size=batch_size,
+            num_workers = num_workers,
+            shuffle=(sampler is None),
+            sampler = sampler, 
+            pin_memory=True,
+            drop_last=True,
+             )
     else:
         return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers = num_workers)
 
