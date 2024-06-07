@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from torchvision.transforms import Compose, Lambda, ToTensor, Pad, Resize
+from torch.utils.data.distributed import DistributedSampler
 import einops
 import numpy as np
 import cv2
@@ -33,20 +34,27 @@ from tqdm import tqdm
 #     return (3, 96, 96)
 
 
-def get_dataloader(batch_size: int, data_dir):
+def get_dataloader(batch_size: int, data_dir, num_workers = 0, distributed = False):
+    
     transform = Compose([ToTensor(), 
                         #  Resize(256),
                         #  transforms.CenterCrop(256),
-                        #  Resize(32),
+                         Resize(64),
                          Lambda(lambda x: (x - 0.5) * 2)
                          ])
     dataset = torchvision.datasets.ImageFolder(root=data_dir,
                                          transform=transform)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    if distributed:
+        sampler = DistributedSampler(dataset)
+    
+    if distributed:
+        return sampler, DataLoader(dataset, sampler = sampler, batch_size=batch_size, shuffle=True, num_workers = num_workers)
+    else:
+        return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers = num_workers)
 
 def get_img_shape():
-    return (3, 256, 256)    # 虽然这么写很蠢。但是好像还真挺好用
-    # return (3, 32, 32)    # 虽然这么写很蠢。但是好像还真挺好用
+    # return (3, 256, 256)    # 虽然这么写很蠢。但是好像还真挺好用
+    return (3, 64, 64)    # 虽然这么写很蠢。但是好像还真挺好用
 
 
 def module_test():
