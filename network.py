@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 import torch
 import numpy as np
 wgan_flag = False
@@ -45,15 +46,15 @@ class ResidualBlock(nn.Module):
 ##  生成器网络GeneratorResNet
 ##############################
 class GeneratorResNet(nn.Module):
-    def __init__(self, input_shape, num_residual_blocks):   ## (input_shape = (3, 256, 256), num_residual_blocks = 9)
+    def __init__(self, input_shape, num_residual_blocks, sample_n = 2, out_features = 32):   ## (input_shape = (3, 256, 256), num_residual_blocks = 9)
         super(GeneratorResNet, self).__init__()
 
         channels = input_shape[0]                           ## 输入通道数channels = 3
 
         ## 初始化网络结构
-        out_features = 128                                  ## 输出特征数out_features = 64 
-        encoder = [                                           ## model = [Pad + Conv + Norm + ReLU]
-            nn.ReflectionPad2d(channels),                   ## ReflectionPad2d(3):利用输入边界的反射来填充输入张量
+        # out_features = out_features                         ## 输出特征数out_features = 64 
+        encoder = [                                         ## model = [Pad + Conv + Norm + ReLU]
+            nn.ReflectionPad2d(3),                   ## ReflectionPad2d(3):利用输入边界的反射来填充输入张量
             nn.Conv2d(channels, out_features, 7),           ## Conv2d(3, 64, 7)
             nn.InstanceNorm2d(out_features),                ## InstanceNorm2d(64):在图像像素上对HW做归一化，用在风格化迁移
             nn.ReLU(inplace=True),                          ## 非线性激活
@@ -61,7 +62,7 @@ class GeneratorResNet(nn.Module):
         in_features = out_features                          ## in_features = 64
 
         ## 下采样，循环2次
-        for _ in range(2):
+        for _ in range(sample_n):
             out_features *= 2                                                   ## out_features = 128 -> 256
             encoder += [                                                          ## (Conv + Norm + ReLU) * 2
                 nn.Conv2d(in_features, out_features, 3, stride=2, padding=1),
@@ -81,7 +82,7 @@ class GeneratorResNet(nn.Module):
             decoder += [ResidualBlock(out_features)]
 
         # 上采样两次
-        for _ in range(2):
+        for _ in range(sample_n):
             out_features //= 2                                                  ## out_features = 128 -> 64
             decoder += [                                                          ## model += [Upsample + conv + norm + relu]
                 nn.Upsample(scale_factor=2),
@@ -92,20 +93,28 @@ class GeneratorResNet(nn.Module):
             in_features = out_features                                          ## out_features = 64
 
         ## 网络输出层                                                            ## model += [pad + conv + tanh]
-        decoder+= [nn.ReflectionPad2d(channels), nn.Conv2d(out_features, channels, 7), nn.Tanh()]    ## 将(3)的数据每一个都映射到[-1, 1]之间
+        decoder+= [nn.ReflectionPad2d(3), nn.Conv2d(out_features, channels, 7) ]    ## 将(3)的数据每一个都映射到[-1, 1]之间
 
         self.encoder = nn.Sequential(*encoder)
         self.decoder = nn.Sequential(*decoder)
+        self.out = nn.Tanh()
 
-    def forward(self, x):           ## 输入(1, 3, 256, 256)
+    def forward(self, x, is_noise = True):           ## 输入(1, 3, 256, 256)
         x = self.encoder(x)
-        return self.decoder(x)        ## 输出(1, 3, 256, 256)
+        if(is_noise == True):
+            noise = Variable(torch.randn(x.size()).to(x.data.get_device()))
+            x = x + noise
+        x = self.decoder(x)
+        return self.out(x)        ## 输出(1, 3, 256, 256)
     
     def encode(self, x):
-        return self.encoder(x)
+        x = self.encoder(x)
+        noise = Variable(torch.randn(x.size()).to(x.data.get_device()))
+        return x, noise
     
     def decode(self, x):
-        return self.decoder(x)
+        x = self.decoder(x)
+        return self.out(x)
     
 
 

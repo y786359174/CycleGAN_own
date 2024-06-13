@@ -31,3 +31,16 @@ class ReplayBuffer:
                 else:
                     to_return.append(element)
         return Variable(torch.cat(to_return))
+    
+def kl_reg_loss(mu):    # 正则
+    # # 计算隐空间向量的均值和方差
+    # latent_mean = torch.mean(latent_vector, dim=0)
+    # latent_var = torch.var(latent_vector, dim=0)      #分布式中计算方差会出错，不知道为啥
+    
+    # # 计算 KL 散度
+    # kl_div = 0.5 * (latent_var + latent_mean**2 - 1 - torch.log(latent_var))        # 只有看成正态分布，才可以这么计算
+    # kl_div = torch.mean(kl_div)
+    mu_2 = torch.pow(mu, 2)
+    encoding_loss = torch.mean(mu_2)
+    
+    return encoding_loss

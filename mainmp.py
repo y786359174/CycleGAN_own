@@ -31,15 +31,12 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
         k_max = 1
     
     print("wgan_flag=", wgan_flag)
-    # criterion_GAN = torch.nn.MSELoss().to(device)
+    # criterion_GAN = torch.nn.MSELoss().to(device) #L1Loss
     criterion_GAN = torch.nn.BCELoss().to(device)
     criterion_Cycle = torch.nn.MSELoss().to(device)
-    criterion_Identity = torch.nn.MSELoss().to(device)
+    # criterion_Identity = torch.nn.MSELoss().to(device)
     criterion_Latent = torch.nn.L1Loss().to(device)
     criterion_Recon = torch.nn.MSELoss().to(device)
-
-    Imgx_dir_name = '../face2face/dataset/train/C'
-    Imgy_dir_name = '../face2face/dataset/train/A'
 
     if Distributed_Flag:
         total_rank = dist.get_world_size()
@@ -51,7 +48,10 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
         disG = DDP(disG, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
         disF = torch.nn.SyncBatchNorm.convert_sync_batchnorm(disF).to(device)
         disF = DDP(disF, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
-    
+
+
+    Imgx_dir_name = '../face2face/dataset/train/C'
+    Imgy_dir_name = '../face2face/dataset/train/A'
     dataloaderx = get_dataloader(batch_size,Imgx_dir_name, distributed = Distributed_Flag)
     dataloadery = get_dataloader(batch_size,Imgy_dir_name, distributed = Distributed_Flag)
     
@@ -66,7 +66,7 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
     gen_params = list(genG.parameters()) + list(genF.parameters())
     dis_params = list(disG.parameters()) + list(disF.parameters())
 
-    dis_weight = 0.5
+    dis_weight = 0.1
     if not wgan_flag:
         optim_gen = torch.optim.Adam([p for p in gen_params if p.requires_grad],
                                             lr, betas=(beta1, 0.999), weight_decay=0.0001)# betas 是一个优化参数，简单来说就是考虑近期的梯度信息的程度
@@ -98,19 +98,12 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
         tic = time.time()
         if(epoch_i%50==0 and k < k_max):          # 让k缓慢的增大到k_max
             k+=1
-        
-            # datax_iter = iter(dataloaderx)
-            # datay_iter = iter(dataloadery)
 
-        loss_list = torch.zeros((9,1)).to(device)
+        loss_list = torch.zeros((11,1)).to(device)
         loss_list = loss_list.squeeze()
 
         for (x, _), (y, _) in tqdm(zip(dataloaderx, dataloadery), disable = local_rank != 0):
-        # for _ in tqdm(range(len_dataset), disable = local_rank != 0):
-                            
-            # x,_  = next(datax_iter) # may raise StopIteration
-            # y,_  = next(datay_iter) 
-            # y = dataloadery[iter_i]
+
             x = x.to(device)
             y = y.to(device)
 
@@ -121,48 +114,37 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
                 param.requires_grad = False
             
         
-            xGe =    genG.module.encode(x)      if Distributed_Flag else genG.encode(x)
-            xy =     genG.module.decode(xGe)    if Distributed_Flag else genG.decode(xGe)
-            yFe =    genF.module.encode(y)      if Distributed_Flag else genF.encode(y)
-            yx =     genF.module.decode(yFe)    if Distributed_Flag else genF.decode(yFe)
-            xGeFdx = genF.module.decode(xGe)    if Distributed_Flag else genF.decode(xGe)
-            yFeGdy = genG.module.decode(yFe)    if Distributed_Flag else genG.decode(yFe)
+            xGe, n_xGe =    genG.module.encode(x)           if Distributed_Flag else genG.encode(x)
+            xy =            genG.module.decode(xGe+n_xGe)   if Distributed_Flag else genG.decode(xGe+n_xGe)
+            yFe, n_yFe =    genF.module.encode(y)           if Distributed_Flag else genF.encode(y)
+            yx =            genF.module.decode(yFe+n_yFe)   if Distributed_Flag else genF.decode(yFe+n_yFe)
+            xGeFdx =        genF.module.decode(xGe+n_xGe)   if Distributed_Flag else genF.decode(xGe+n_xGe)
+            yFeGdy =        genG.module.decode(yFe+n_yFe)   if Distributed_Flag else genG.decode(yFe+n_yFe)
 
             g_loss_recon = criterion_Recon(x,xGeFdx) + criterion_Recon(y, yFeGdy)
-
+            g_loss_klreg = kl_reg_loss(xGe) + kl_reg_loss(yFe)
             if not wgan_flag:
                 g_loss_gan = criterion_GAN(disG(xy), label_real) + criterion_GAN(disF(yx), label_real)               # woc xdm训练gen时千万记得别再傻呵呵用fake label当target了
-                # g_loss_gan_G = criterion_GAN(disG(xy), label_real)
-                # g_loss_gan_F = criterion_GAN(disF(yx), label_real)
             else:
                 g_wloss_G = -torch.mean(disG(xy))
                 g_wloss_F = -torch.mean(disF(yx))
                 g_loss_gan = g_wloss_G+g_wloss_F
                 
-            # xyFe = genF.module.encode(xy)    if Distributed_Flag else genF.encode(xy)
-            # xyx =  genF.module.decode(xyFe)  if Distributed_Flag else genF.decode(xyFe)
-            # yxGe = genG.module.encode(yx)    if Distributed_Flag else genG.encode(yx)
-            # yxy =  genG.module.decode(yxGe)  if Distributed_Flag else genG.decode(yxGe)
-            xyx = genF(xy)
-            yxy = genG(yx)
-            # g_loss_latent = criterion_Latent(xGe, xyFe) + criterion_Latent(yFe, yxGe)
-            
+            xyFe, n_xyFe = genF.module.encode(xy)    if Distributed_Flag else genF.encode(xy)
+            xyx =  genF.module.decode(xyFe+n_xyFe)   if Distributed_Flag else genF.decode(xyFe+n_xyFe)
+            yxGe, n_yxGe = genG.module.encode(yx)    if Distributed_Flag else genG.encode(yx)
+            yxy =  genG.module.decode(yxGe+n_yxGe)   if Distributed_Flag else genG.decode(yxGe+n_yxGe)
+            g_loss_latent = criterion_Latent(xGe, xyFe) + criterion_Latent(yFe, yxGe)
 
-            
-
+            # xyx = genF(xy)
+            # yxy = genG(yx)
             g_loss_cycle_G = criterion_Cycle(xyx, x)
             g_loss_cycle_F = criterion_Cycle(yxy, y) 
             g_loss_cycle = g_loss_cycle_G + g_loss_cycle_F
-            # print(g_loss_cycle_1, g_loss_cycle_2)
             # xx = genF(x)
             # yy = genG(y)
             # g_loss_identity = criterion_Identity(xx, x) + criterion_Identity(yy, y)
-            # g_loss_identity_G = criterion_Identity(xx, x)
-            # g_loss_identity_F = criterion_Identity(yy, y)
-            g_loss = g_loss_gan*10+ g_loss_cycle*20 + g_loss_recon*40
-            # g_loss_G = g_loss_gan_G * gan_const + g_loss_cycle_G*20 + g_loss_identity_G*10
-            # g_loss_F = g_loss_gan_F * gan_const + g_loss_cycle_F*20 + g_loss_identity_F*10
-            # g_loss = g_loss_G + g_loss_F + g_loss_latent
+            g_loss = g_loss_gan + g_loss_cycle*20 + g_loss_recon*20 + g_loss_latent*10 + g_loss_klreg*0.1
             optim_gen.zero_grad()
             g_loss.backward()
             optim_gen.step()
@@ -181,7 +163,6 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
                 dgf = disG(xy_)
                 dfr = disF(x)
                 dff = disF(yx_)
-                # print(dgr, dgf ,dfr ,dff)
                 
                 if not wgan_flag:
                     d_loss_G_real = criterion_GAN(dgr, label_real)
@@ -205,7 +186,7 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
                         p.data.clamp_(-0.01, 0.01)
                     for p in disF.parameters():
                         p.data.clamp_(-0.01, 0.01)
-            loss_list += torch.stack([g_loss, d_loss, g_loss_gan, g_loss_cycle, g_loss_recon, d_loss_G_real, d_loss_G_fake, d_loss_F_real, d_loss_F_fake])  #把列表转换成tensor
+            loss_list += torch.stack([g_loss, d_loss, g_loss_gan, g_loss_cycle, g_loss_recon, g_loss_latent, g_loss_klreg, d_loss_G_real, d_loss_G_fake, d_loss_F_real, d_loss_F_fake])  #把列表转换成tensor
             
 
 
@@ -214,16 +195,16 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
         loss_list = loss_list/len_dataset    
         toc = time.time()    
         if Distributed_Flag==False or local_rank<=0:
-            gan_weights = {'genG': genG.state_dict(), 'genF': genF.state_dict(), 'disG': disG.state_dict(), 'disF': disF.state_dict()}
+            gan_weights = {'genG': genG.module.state_dict(), 'genF': genF.module.state_dict(), 'disG': disG.module.state_dict(), 'disF': disF.module.state_dict()}
             torch.save(gan_weights, ckpt_path)
             print(f'epoch {epoch_i} g_loss: {loss_list[0].item():.4e} d_loss: {loss_list[1].item():.4e} time: {(toc - tic):.2f}s device: {device}')
-            print(f'g_loss_gan {loss_list[2].item():.4e} g_loss_cycle: {loss_list[3].item():.4e} g_loss_recon: {loss_list[6].item():.4e}')
+            print(f'g_loss_gan {loss_list[2].item():.4e} g_loss_cycle: {loss_list[3].item():.4e} g_loss_recon: {loss_list[4].item():.4e} g_loss_latent {loss_list[5].item():.4e}g_loss_klreg {loss_list[6].item():.4e}')
             if not wgan_flag:
                 print(f'd_loss_G_real {loss_list[7].item():.4e} d_loss_G_fake: {loss_list[8].item():.4e} d_loss_F_real: {loss_list[9].item():.4e} d_loss_F_fake: {loss_list[10].item():.4e}')
             else:
                 print(f'g_wloss_G {g_wloss_G.item():.4e} g_wloss_F {g_wloss_F.item():.4e} d_wloss_G {d_wloss_G.item():.4e} d_wloss_F: {d_wloss_F.item():.4e}')
             if(epoch_i%1==0):
-                sample(genG, genF, device=device)
+                sample(genG.module, genF.module, device=device)
 
 
     if Distributed_Flag:    
@@ -250,16 +231,16 @@ def sample(genG:GeneratorResNet, genF:GeneratorResNet, device='cuda'):
 
         x = x.to(device)
         y = y.to(device)  
-        xy =        genG.module(x)              if Distributed_Flag else genG(x)
-        xyx =       genF.module(xy)             if Distributed_Flag else genF(xy)
-        xx =        genF.module(x)              if Distributed_Flag else genF(x)
-        yx =        genF.module(y)              if Distributed_Flag else genF(y)
-        yxy =       genG.module(yx)             if Distributed_Flag else genG(yx)
-        yy =        genG.module(y)              if Distributed_Flag else genG(y)
-        xGe =       genG.module.encode(x)       if Distributed_Flag else genG.encode(x)
-        yFe =       genF.module.encode(y)       if Distributed_Flag else genF.encode(y)
-        xGeFdx =    genF.module.decode(xGe)     if Distributed_Flag else genF.decode(xGe)
-        yFeGdy =    genG.module.decode(yFe)     if Distributed_Flag else genG.decode(yFe)
+        xy =       genG(x)
+        xyx =      genF(xy)
+        xx =       genF(x)
+        yx =       genF(y)
+        yxy =      genG(yx)
+        yy =       genG(y)
+        xGe, _ =   genG.encode(x)
+        yFe, _ =   genF.encode(y)
+        xGeFdx =   genF.decode(xGe)
+        yFeGdy =   genG.decode(yFe)
         x_stack = torch.stack((x, xy, xyx, xx, xGeFdx, y, yx, yxy, yy, yFeGdy), dim = 0)
         x_new = einops.rearrange(x_stack, 'x n c h w -> (x h) (n w) c')
         x_new = (x_new.clip(-1, 1) + 1) / 2 * 255
@@ -310,8 +291,8 @@ if __name__ == '__main__':
 
     ckpt_path = os.path.join(save_dir,'model_cyclegan.pth')
     image_shape = get_img_shape()
-    genG = GeneratorResNet(image_shape, 11).to(device)    # x->y
-    genF = GeneratorResNet(image_shape, 11).to(device)    # y->x
+    genG = GeneratorResNet(image_shape, 5).to(device)    # x->y
+    genF = GeneratorResNet(image_shape, 5).to(device)    # y->x
     disG = Discriminator(image_shape).to(device)
     disF = Discriminator(image_shape).to(device)
     genG.apply(weights_init_normal)
@@ -326,10 +307,10 @@ if __name__ == '__main__':
     # sample(genG, genF, device=device)
 
     train(genG, genF, disG, disF, ckpt_path, device=device)
-    gan_weights = torch.load(ckpt_path)
-    genG.load_state_dict(gan_weights['genG'])
-    genF.load_state_dict(gan_weights['genF'])
-    disG.load_state_dict(gan_weights['disG'])
-    disF.load_state_dict(gan_weights['disF'])
+    # gan_weights = torch.load(ckpt_path)
+    # genG.load_state_dict(gan_weights['genG'])
+    # genF.load_state_dict(gan_weights['genF'])
+    # disG.load_state_dict(gan_weights['disG'])
+    # disF.load_state_dict(gan_weights['disF'])
 
-    sample(genG, genF, device=device)
+    # sample(genG, genF, device=device)
