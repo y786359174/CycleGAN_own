@@ -33,13 +33,12 @@ from tqdm import tqdm
 # def get_img_shape():
 #     return (3, 96, 96)
 
-
-def get_dataloader(batch_size: int, data_dir, num_workers = 0, distributed = False):
+def get_dataloader(batch_size: int, data_dir, num_workers = 0, size = 64, distributed = False):
     
     transform = Compose([ToTensor(), 
                         #  Resize(256),
                         #  transforms.CenterCrop(256),
-                         Resize(64),
+                         Resize(size),
                          Lambda(lambda x: (x - 0.5) * 2)
                          ])
     dataset = torchvision.datasets.ImageFolder(root=data_dir,
@@ -61,9 +60,13 @@ def get_dataloader(batch_size: int, data_dir, num_workers = 0, distributed = Fal
     else:
         return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers = num_workers, drop_last=True)
 
-def get_img_shape():
+img_size = 64
+def get_img_shape(size:int = 0):
+    global img_size
+    if(size !=0 ):
+        img_size = size
     # return (3, 256, 256)    # 虽然这么写很蠢。但是好像还真挺好用
-    return (3, 64, 64)    # 虽然这么写很蠢。但是好像还真挺好用
+    return (3, img_size, img_size)    # 虽然这么写很蠢。但是好像还真挺好用
 
 
 def module_test():

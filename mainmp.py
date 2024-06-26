@@ -80,8 +80,8 @@ def train(genG:GeneratorResNet, genF:GeneratorResNet, disG:Discriminator, disF:D
     genF = genF.train()
     disG = disG.train()
     disF = disF.train()
-    label_fake = torch.full((batch_size,1,3,3), 0.01, dtype=torch.float, device=device).detach()       # 真实图是1，虚假是0,需要注意,这里用的时候是计算loss，是小数，要用1. 和0.
-    label_real = torch.full((batch_size,1,3,3), 0.99, dtype=torch.float, device=device).detach()       # 还有一件事，这里不能随意用batch_size，因为最后可能不满512，但是还是会继续算。得实时读取x的bn大小
+    label_fake = torch.full((batch_size,1,4,4), 0.01, dtype=torch.float, device=device).detach()       # 真实图是1，虚假是0,需要注意,这里用的时候是计算loss，是小数，要用1. 和0.
+    label_real = torch.full((batch_size,1,4,4), 0.99, dtype=torch.float, device=device).detach()       # 还有一件事，这里不能随意用batch_size，因为最后可能不满512，但是还是会继续算。得实时读取x的bn大小
                                                                     # 一般四个维度分别是bn c h w
                                                                     # 我把他从循环中挪出来并且检测x的bn不是batch_size就跳过
     xy_buffer = ReplayBuffer()
@@ -263,10 +263,13 @@ def weights_init_normal(m):
         torch.nn.init.normal_(m.weight.data, 1.0, 0.02)     ## m.weight.data表示需要初始化的权重. nn.init.normal_():表示随机初始化采用正态分布，均值为0，标准差为0.02.
         torch.nn.init.constant_(m.bias.data, 0.0)           ## nn.init.constant_():表示将偏差定义为常量0.
 
-save_dir = './data/face2anime_wgan64/'
+save_dir = './data/face2anime_64/'
 
 if __name__ == '__main__':
 
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+        
     if Distributed_Flag:
         # setup
         local_rank = int(os.environ["LOCAL_RANK"]) ## DDP   

@@ -144,10 +144,10 @@ class Discriminator(nn.Module):
             *discriminator_block(channels, 64, normalize=False),        ## layer += [conv(3, 64) + relu]
             *discriminator_block(64, 128),                              ## layer += [conv(64, 128) + norm + relu]
             *discriminator_block(128, 256),                             ## layer += [conv(128, 256) + norm + relu]
-            *discriminator_block(256, 512),                             ## layer += [conv(256, 512) + norm + relu]
-            nn.ZeroPad2d((1, 0, 1, 0)),                                 ## layer += [pad]
-            nn.Conv2d(512, 512, 4, padding=1),                          ##
-            nn.Conv2d(512, 1, 4, padding=1)                             ## layer += [conv(512, 1)]
+            # *discriminator_block(256, 512),                             ## layer += [conv(256, 512) + norm + relu]
+            # nn.ZeroPad2d((1, 0, 1, 0)),                                 ## layer += [pad]
+            nn.Conv2d(256, 256, 3),                          ##
+            nn.Conv2d(256, 1, 3)                             ## layer += [conv(512, 1)]
         )
 
         if not wgan_flag:
